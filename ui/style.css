@@ -22,9 +22,12 @@ body {
   color: var(--text-main);
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  /* Top-align so tall content (e.g. the evidence panel after Assess) can scroll
+     instead of overflowing a vertically-centred box that clips it. */
+  align-items: flex-start;
   justify-content: center;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   position: relative;
 }
 
@@ -76,7 +79,7 @@ body {
   z-index: 1;
   width: 100%;
   max-width: 420px;
-  padding: 20px;
+  padding: 40px 20px;
   transition: max-width 0.3s ease;
 }
 
@@ -605,3 +608,29 @@ body {
 .kpi-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(197, 198, 199, 0.75); }
 .kpi-value { font-size: 1.5rem; font-weight: 700; color: var(--primary); margin: 4px 0; font-variant-numeric: tabular-nums; }
 .kpi-sub { font-size: 0.72rem; color: rgba(197, 198, 199, 0.6); }
+
+/* --- New application ingestion form --- */
+.queue-header { display: flex; justify-content: space-between; align-items: center; }
+.queue-header .section-heading { margin: 0; }
+#new-app-btn { width: auto; padding: 8px 16px; }
+
+.ingest-card { max-width: 760px; max-height: 88vh; overflow-y: auto; }
+.ingest-hint { font-size: 0.8rem; color: rgba(197, 198, 199, 0.75); line-height: 1.5; margin: 6px 0 16px; }
+.ingest-section-label {
+  font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--primary); font-weight: 700; margin: 18px 0 8px;
+  border-bottom: 1px solid rgba(102, 252, 241, 0.15); padding-bottom: 5px;
+}
+.ingest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 16px; }
+.ingest-grid label {
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 0.78rem; color: rgba(197, 198, 199, 0.9);
+}
+.ingest-grid input, .ingest-grid select {
+  padding: 9px 11px; border-radius: 8px;
+  border: 1px solid rgba(102, 252, 241, 0.25);
+  background: rgba(11, 12, 16, 0.6); color: var(--text); font-size: 0.9rem;
+}
+.ingest-grid input:focus, .ingest-grid select:focus { outline: none; border-color: var(--primary); }
+#ingest-form #ingest-submit { width: 100%; margin-top: 20px; }
+#ingest-error { margin-top: 14px; }

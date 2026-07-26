@@ -10,7 +10,7 @@ Halcyon Credit is a digital consumer lender building an **Agentic Underwriting C
    - Located in `src/api/`, split into `routers/` (HTTP layer) and `services/` (pure, testable business logic).
    - Used for ML inference, RAG policy evaluation, and serving API endpoints.
    - **Database**: PostgreSQL (currently using a local SQLite `test.db` fallback for development) handled by `SQLAlchemy`.
-   - **Authentication**: Custom JWT-based authentication using `PyJWT` and `passlib[bcrypt]`.
+   - **Authentication + RBAC**: Custom JWT auth (`PyJWT` + `passlib[bcrypt]`) with two roles — `applicant` (creates/sees only their own applications via `Application.owner_id`, views decision status Pending/Approved/Denied at `GET /applications/my`) and `underwriter` (ops: sees all applications, assess/decide, ops/fairness/policy/dashboard tools). Ops endpoints are gated by `require_ops` (403 otherwise). Role is chosen at registration (POC; production would admin-provision ops accounts).
 
 2. **Frontend (Vanilla HTML/JS + Vite)**:
    - Located in `ui/`.
@@ -82,7 +82,7 @@ Halcyon Credit is a digital consumer lender building an **Agentic Underwriting C
 ## Sprint 3 Placeholders & Known Simplifications
 - **Document OCR is out of scope**: `declared_name` / `declared_income` are supplied as structured metadata at upload; the completeness/consistency checks are identical to what they'd be over OCR-extracted fields.
 - **Regulatory services are deterministic mocks** (hash-based verdicts + a `force_fail` transient-outage simulation) — no live KYC/bureau integration in v1.
-- **The live assessment path uses the rule-based scorer** (`services/scoring.py`), not the trained ML model, because the seeded POC applications aren't rows in the 307K HC dataset the ML model expects. `explain_score()` supplies risk factors so the evidence chain stays complete. Wiring the ML model end-to-end needs an inference feature-assembly path for arbitrary applications (future work).
+- **The live assessment path defaults to the rule-based scorer** (`services/scoring.py`); the **trained ML model is now wired in** via `src/risk_model/predict.py::predict_from_features`, which scores a brand-new application from its raw fields (stored in `Application.raw_row_json`) through the exact trained pipeline (aux aggregates 0-fill for applicants with no history). Enable it with **`RISK_SCORER=ml`** + `requirements-ml.txt` + the model at `models/production/risk_model_v1.pkl`. `run_assessment` uses the model when enabled/available and **falls back to rule-based** otherwise; the chosen scorer is recorded in the evidence chain (`scorer`). Caveat: single-row missingness features can't perfectly match the 122-column training distribution, and `EXT_SOURCE_*` should be supplied from a bureau (else imputed to training medians).
 - **UI Vite build requires `npm install` in `ui/`** (node_modules not committed). JS is syntax-validated.
 
 ## Sprint 2 Placeholders & Known Simplifications
@@ -98,17 +98,27 @@ Halcyon Credit is a digital consumer lender building an **Agentic Underwriting C
 - **`decision_record` underwriter fields are updated in place** (not a separate insert-only audit_event table) when an underwriter accepts/overrides - matches the AC's literal "appended to the same record" wording. A stricter insert-only audit table is deferred to a later sprint.
 - **Recommendation rule table is a Sprint-1 simplification** of FR-3's full multi-scheme policy engine (out of scope until Sprint 2).
 
+## Production Integrations (pluggable, env-switched, graceful fallback)
+The three FR-2/FR-4/FR-9 pieces are wired so the app runs with lightweight defaults
+and upgrades to the production stack purely via env vars (see `.env.example`). Every
+integration falls back safely if its deps/services/keys are absent.
+
+| Concern | Default | Production | Switch |
+|---------|---------|-----------|--------|
+| **Score** (FR-2) | rule-based (`scoring.py`) | trained LightGBM (`predict.predict_from_features`) | `RISK_SCORER=ml` + `requirements-ml.txt` + model file |
+| **Policy retrieval** (FR-4) | TF-IDF in-memory | **Qdrant + embeddings** (`vector_retrieval.py`, fastembed) | `RETRIEVER=vector` + `requirements-rag.txt` + `QDRANT_URL` |
+| **Explanation** (FR-9) | deterministic grounded generator | **LLM via OpenRouter** (`llm_explanation.py`, PII-redacted, decision stays deterministic) | `LLM_PROVIDER=openrouter` + `OPENROUTER_API_KEY` + `requirements-llm.txt` |
+| **Database** | SQLite file | **PostgreSQL** (SQLAlchemy, `psycopg`) | `DATABASE_URL=postgresql+psycopg://…` |
+
+- Vector index: in-memory Qdrant indexes lazily at first query; for a Qdrant server run `python -m scripts.index_policies`.
+- `docker-compose.yml` starts Postgres + Qdrant locally.
+
 ## Environment Variables
-- Create a `.env` file at the root.
-- Required keys:
-  - `DATABASE_URL` (e.g., `sqlite:///./test.db` or `postgresql://user:pass@host/db`)
-  - `JWT_SECRET_KEY`
-  - `JWT_ALGORITHM`
-  - `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`
+- Copy `.env.example` to `.env`. Core keys: `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, `DATABASE_URL`.
+- Integration keys: `RISK_SCORER`, `RETRIEVER`, `QDRANT_URL`, `EMBEDDING_MODEL`, `LLM_PROVIDER`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`.
 
 ## How to Run
-- **Seed the database** (idempotent, run once and any time `data/` changes): `python -m scripts.seed_db`
-- **Backend**: `source .venv/bin/activate && uvicorn src.api.main:app --reload --port 8000`
-- **Frontend**: `cd ui && npm run dev`
+- **Full stack (production-like)**: `docker compose up -d` (Postgres + Qdrant) → set `.env` (RETRIEVER=vector, RISK_SCORER=ml, LLM_PROVIDER=openrouter, DATABASE_URL=postgres) → `pip install -r requirements-ml.txt -r requirements-rag.txt -r requirements-llm.txt` → `python -m scripts.index_policies` → `uvicorn src.api.main:app --port 8000`.
+- **Lightweight (defaults)**: `uvicorn src.api.main:app --reload --port 8000` (SQLite + TF-IDF + rule-based + deterministic explanation; `requirements.txt` only).
+- **Frontend**: `cd ui && npm install && npm run dev`
 - **Tests**: `pytest` from the repo root
-- **Demo**: see `docs/demo_script.md` (includes the seeded demo underwriter login)

@@ -10,6 +10,9 @@ from pydantic import BaseModel, ConfigDict
 class UserCreate(BaseModel):
     email: str
     password: str
+    # POC: role is chosen at registration ("applicant" or "underwriter").
+    # In production, ops/underwriter accounts would be admin-provisioned.
+    role: Optional[str] = "applicant"
 
 
 class Token(BaseModel):
@@ -39,6 +42,18 @@ class ApplicationIngestRequest(BaseModel):
     REGION_RATING_CLIENT: Optional[str] = None
     OCCUPATION_TYPE: Optional[str] = None
 
+    # Additional inputs the trained ML model uses (optional; supply for ML scoring).
+    # In production EXT_SOURCE_* come from an external credit bureau.
+    AMT_GOODS_PRICE: Optional[str] = None
+    CNT_FAM_MEMBERS: Optional[str] = None
+    CNT_CHILDREN: Optional[str] = None
+    EXT_SOURCE_1: Optional[str] = None
+    EXT_SOURCE_2: Optional[str] = None
+    EXT_SOURCE_3: Optional[str] = None
+    FLAG_OWN_CAR: Optional[str] = None
+    FLAG_OWN_REALTY: Optional[str] = None
+    NAME_INCOME_TYPE: Optional[str] = None
+
 
 class ApplicationSummary(BaseModel):
     id: int
@@ -49,6 +64,19 @@ class ApplicationSummary(BaseModel):
     status: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ApplicationStatus(BaseModel):
+    """Applicant-facing view: their application + its decision status."""
+
+    id: int
+    external_id: str
+    loan_scheme: Optional[str] = None
+    amt_credit: Optional[float] = None
+    amt_income_total: Optional[float] = None
+    status: str  # ingestion completeness (COMPLETE / INCOMPLETE)
+    decision_status: str  # Pending / Approved / Denied
+    created_at: datetime
 
 
 class ApplicationDetail(ApplicationSummary):

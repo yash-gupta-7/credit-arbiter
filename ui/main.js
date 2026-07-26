@@ -1,4 +1,8 @@
-const API_BASE = 'http://localhost:8000/api';
+// Local dev (Vite on :5173) talks to the backend on :8000; when deployed, the
+// frontend is served same-origin behind nginx, which proxies /api to the backend.
+const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? 'http://localhost:8000/api'
+  : '/api';
 
 // DOM Elements
 const appEl = document.getElementById('app');
@@ -10,6 +14,14 @@ const showLoginLink = document.getElementById('show-login');
 const alertBox = document.getElementById('alert-box');
 const logoutBtn = document.getElementById('logout-btn');
 const userInfo = document.getElementById('user-info');
+
+// Role-based UI
+let currentRole = null;
+const regRole = document.getElementById('reg-role');
+const applicantView = document.getElementById('applicant-view');
+const applicantRows = document.getElementById('applicant-rows');
+const applicantEmpty = document.getElementById('applicant-empty');
+const applicantNewAppBtn = document.getElementById('applicant-new-app-btn');
 
 // Queue / detail / assess elements
 const queueView = document.getElementById('queue-view');
@@ -75,15 +87,64 @@ function showRegister() {
   hideAlert();
 }
 
-function showDashboard(email) {
+function showDashboard(email, role) {
+  currentRole = role;
+  const isOps = role === 'underwriter';
   appEl.classList.add('dashboard-wide');
   loginForm.classList.add('hidden');
   registerForm.classList.add('hidden');
   dashboardView.classList.remove('hidden');
-  userInfo.textContent = `Logged in as: ${email}`;
+  userInfo.textContent = `Logged in as: ${email} · ${isOps ? 'Ops / Underwriter' : 'Applicant'}`;
   hideAlert();
-  showQueue();
-  fetchQueue();
+
+  // Ops-only chrome
+  document.getElementById('ops-toggle-btn').classList.toggle('hidden', !isOps);
+  document.getElementById('ops-panel').classList.add('hidden');
+  detailView.classList.add('hidden');
+
+  if (isOps) {
+    queueView.classList.remove('hidden');
+    applicantView.classList.add('hidden');
+    fetchQueue();
+  } else {
+    queueView.classList.add('hidden');
+    applicantView.classList.remove('hidden');
+    fetchMyApplications();
+  }
+}
+
+async function fetchMyApplications() {
+  try {
+    const res = await fetch(`${API_BASE}/applications/my`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error('Failed to load your applications');
+    renderMyApplications(await res.json());
+  } catch (error) {
+    showAlert(error.message);
+  }
+}
+
+function renderMyApplications(apps) {
+  applicantRows.innerHTML = '';
+  applicantEmpty.classList.toggle('hidden', apps.length > 0);
+  apps.forEach((a) => {
+    const cls = { Approved: 'badge-low', Denied: 'badge-high', Pending: 'badge-medium' }[a.decision_status] || 'badge-medium';
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${escapeHtml(a.external_id)}</td>
+      <td>${escapeHtml(a.loan_scheme || '-')}</td>
+      <td>${formatCurrency(a.amt_credit)}</td>
+      <td>${a.status === 'COMPLETE' ? 'Complete' : 'Incomplete'}</td>
+      <td><span class="badge ${cls}">${escapeHtml(a.decision_status)}</span></td>`;
+    applicantRows.appendChild(row);
+  });
+}
+
+// Refresh whichever application view is active (used after ingest).
+function refreshApplications() {
+  if (currentRole === 'underwriter') fetchQueue();
+  else fetchMyApplications();
 }
 
 function showQueue() {
@@ -158,7 +219,7 @@ async function handleRegister(e) {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, role: regRole.value })
     });
 
     if (!res.ok) {
@@ -188,7 +249,7 @@ async function fetchUserDetails() {
     }
 
     const user = await res.json();
-    showDashboard(user.email);
+    showDashboard(user.email, user.role);
   } catch (error) {
     token = null;
     localStorage.removeItem('halcyon_token');
@@ -239,6 +300,7 @@ async function openApplication(id) {
 
     renderDetail(application);
     assessmentResult.classList.add('hidden');
+    assessBtn.classList.remove('hidden');  // reset in case a prior decision hid it
     showDetail();
   } catch (error) {
     showAlert(error.message);
@@ -416,11 +478,17 @@ async function handleDecision(action, reason, reasonCode) {
     }
 
     const record = await res.json();
+    // A decision is final: lock the controls and prevent re-assessing this
+    // application (which would otherwise spawn fresh Accept/Override controls).
     decisionControls.classList.add('hidden');
     overrideForm.classList.add('hidden');
+    assessBtn.classList.add('hidden');
     decisionConfirmation.classList.remove('hidden');
+    const label = record.underwriter_action === 'override'
+      ? `Overridden (${record.underwriter_reason_code})`
+      : 'Accepted';
     decisionConfirmation.textContent =
-      `Recorded: ${record.underwriter_action} at ${new Date(record.underwriter_action_at).toLocaleString()}`;
+      `Decision recorded — ${label} at ${new Date(record.underwriter_action_at).toLocaleString()}. This is final.`;
     decisionConfirmation.style.color = 'var(--primary)';
     decisionConfirmation.style.borderColor = 'var(--primary)';
     decisionConfirmation.style.background = 'rgba(102, 252, 241, 0.1)';
@@ -464,6 +532,60 @@ submitOverrideBtn.addEventListener('click', () => {
 clauseModalClose.addEventListener('click', () => clauseModal.classList.add('hidden'));
 clauseModal.addEventListener('click', (e) => {
   if (e.target === clauseModal) clauseModal.classList.add('hidden');
+});
+
+// --- New application ingestion form ---
+const newAppBtn = document.getElementById('new-app-btn');
+const ingestModal = document.getElementById('ingest-modal');
+const ingestClose = document.getElementById('ingest-close');
+const ingestForm = document.getElementById('ingest-form');
+const ingestError = document.getElementById('ingest-error');
+const ingestSubmit = document.getElementById('ingest-submit');
+
+function openIngest() {
+  ingestForm.reset();
+  ingestError.classList.add('hidden');
+  ingestModal.classList.remove('hidden');
+}
+function closeIngest() { ingestModal.classList.add('hidden'); }
+
+newAppBtn.addEventListener('click', openIngest);
+applicantNewAppBtn.addEventListener('click', openIngest);
+ingestClose.addEventListener('click', closeIngest);
+ingestModal.addEventListener('click', (e) => { if (e.target === ingestModal) closeIngest(); });
+
+ingestForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  ingestError.classList.add('hidden');
+
+  // Collect only the non-blank fields into a Home-Credit-shaped payload.
+  const payload = {};
+  new FormData(ingestForm).forEach((value, key) => {
+    const trimmed = String(value).trim();
+    if (trimmed !== '') payload[key] = trimmed;
+  });
+
+  ingestSubmit.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/applications/ingest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      let detail = 'Failed to create application';
+      try { const j = await res.json(); detail = j.detail || detail; } catch (_) { /* ignore */ }
+      throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    }
+    closeIngest();
+    showAlert('Application created.', false);
+    refreshApplications();
+  } catch (err) {
+    ingestError.textContent = err.message;
+    ingestError.classList.remove('hidden');
+  } finally {
+    ingestSubmit.disabled = false;
+  }
 });
 
 // --- Ops dashboard (US-407) ---
