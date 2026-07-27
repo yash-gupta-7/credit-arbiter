@@ -946,35 +946,6 @@ timeline
 
 ---
 
-## 🎓 Interview Guide
-
-<details open>
-<summary><b>Talk about this project like a senior engineer</b></summary>
-
-**The one-liner:** *"A human-in-the-loop lending copilot that fuses ML risk scoring, RAG policy retrieval, and LLM explanations into a single auditable evidence chain — with fairness, cost, and kill-switch guardrails that make it impossible to auto-approve on incomplete or biased evidence."*
-
-**Architecture (30s):** FastAPI backend split into a thin router layer and a pure service layer, so every decision rule is unit-testable without HTTP. Four env-switched integrations (score, retrieval, explanation, DB) each degrade gracefully. A Vite/Vanilla-JS UI is served by nginx which also proxies `/api`. The whole thing runs with one `docker compose up`.
-
-**Key tradeoffs:**
-- *LLM as explainer, not decider* — protects against hallucinated credit decisions and keeps a human legally accountable.
-- *TF-IDF default, Qdrant opt-in* — right-sized retrieval for a 21-clause corpus; no infra tax to start.
-- *In-place underwriter fields on `decision_record` + a separate insert-only `audit_event` chain* — pragmatic for the app record, strict for the audit trail.
-
-**Hardest problems solved:**
-1. **Inference bridge** — scoring a brand-new single application through a pipeline trained on 122 columns + aux aggregates (0-fill for no-history applicants), while keeping protected features out.
-2. **Tamper-evident audit** — a SHA-256 hash chain that's cheap, verifiable, and reconstructable.
-3. **Fairness hard-block** — turning a monitoring metric (>5pp gap) into an enforceable circuit breaker that pauses a whole scheme.
-4. **Graceful degradation everywhere** — the same code runs on a laptop and on the full production stack.
-
-**Scaling story:** stateless API → scale horizontally behind a load balancer; Postgres read replicas; Qdrant as a managed cluster; move the (currently synchronous) assessment to a worker queue if latency budgets tighten. P95 is already ≈0.34s in-process.
-
-**If I had another sprint:** raise AUC to 0.80 with richer FE, wire live KYC, add rate limiting + CI/CD, and run a real human pilot.
-
-**Common questions → answers:** see the [FAQ](#-faq) above — every one is a likely interview prompt.
-
-</details>
-
----
 
 ## 🤝 Contributing
 
